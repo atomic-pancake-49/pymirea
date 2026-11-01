@@ -29,6 +29,19 @@ from . import __version__
 from . import app as A
 from .store import NotLoggedIn, SessionStore
 
+
+def _force_utf8() -> None:
+    """Кириллица в консоли: старая консоль Windows (cp866/cp1251) иначе даёт
+    кракозябры, а при stdout=ascii `print` падает. На 3.7+ переводим потоки в UTF-8."""
+    for stream in (sys.stdout, sys.stderr, sys.stdin):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass
+
+
 _DAY_NAMES = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 
 
@@ -350,6 +363,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command != "mcp":  # mcp-stdio использует stdout как канал протокола
+        _force_utf8()
     store = SessionStore(args.home)
     try:
         if asyncio.iscoroutinefunction(args.func):
