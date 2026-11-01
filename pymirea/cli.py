@@ -103,6 +103,22 @@ def _render_attendance(data: dict) -> None:
         print(f"  {marks.get(e['status'], '?')} {e['lesson_start'] or '?'}")
 
 
+def _render_sdo(data: dict) -> None:
+    courses = data["courses"]
+    print(f"Курсы ({len(courses)}):")
+    for c in courses:
+        print(f"  \u2022 {c['name']}")
+    deadlines = data["deadlines"]
+    print(f"\n\u0414\u0435\u0434\u043b\u0430\u0439\u043d\u044b ({len(deadlines)}):")
+    for d in deadlines:
+        print(f"  {d['when'] or '?'}  {d['name']}  \u2014 {d['course']}")
+    grades = [g for g in data["grades"] if g.get("grade")]
+    if grades:
+        print(f"\n\u041e\u0446\u0435\u043d\u043a\u0438 ({len(grades)}):")
+        for g in grades:
+            print(f"  {g['grade']:>8}  {g['course']}")
+
+
 def _render_acs(data: dict) -> None:
     events = data["events"]
     if not events:
@@ -210,6 +226,12 @@ async def cmd_attendance(args, store: SessionStore) -> int:
     return 0
 
 
+async def cmd_sdo(args, store: SessionStore) -> int:
+    data = await A.sdo(store, limit=args.limit)
+    _print_json(data) if args.json else _render_sdo(data)
+    return 0
+
+
 async def cmd_acs(args, store: SessionStore) -> int:
     data = await A.acs_today(store)
     _print_json(data) if args.json else _render_acs(data)
@@ -292,6 +314,10 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("attendance", parents=[common], help="посещаемость по дисциплине")
     s.add_argument("discipline", help="discipline_id или часть названия предмета")
     s.set_defaults(func=cmd_attendance)
+
+    s = sub.add_parser("sdo", parents=[common], help="СДО: курсы, дедлайны, оценки (Moodle)")
+    s.add_argument("--limit", type=int, default=50, help="сколько дедлайнов максимум")
+    s.set_defaults(func=cmd_sdo)
 
     s = sub.add_parser("acs", parents=[common], help="проходы через турникеты за сегодня")
     s.set_defaults(func=cmd_acs)

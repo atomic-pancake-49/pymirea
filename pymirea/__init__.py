@@ -41,6 +41,7 @@ from .schedule import (
     Schedule,
     ScheduleEvent,
 )
+from .sdo import MireaSDO, SdoCourse, SdoDeadline, SdoGrade, SdoResult
 from .session import MireaAPI
 from .tokens import (
     ensure_fresh_token,
@@ -58,6 +59,11 @@ __all__ = [
     "MireaACS",
     "MireaAuth",
     "MireaEsports",
+    "MireaSDO",
+    "SdoCourse",
+    "SdoDeadline",
+    "SdoGrade",
+    "SdoResult",
     "MireaSchedule",
     "Schedule",
     "ScheduleEvent",

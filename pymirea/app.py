@@ -18,6 +18,7 @@ from typing import AsyncIterator
 from .acs import MireaACS
 from .grades import MireaGrades
 from .schedule import MireaSchedule, Schedule
+from .sdo import MireaSDO
 from .session import MireaAPI
 from .store import SessionStore
 from .tokens import get_token_age_seconds, get_token_exp
@@ -169,6 +170,28 @@ async def attendance(store: SessionStore, discipline: str) -> dict:
     }
 
 
+async def sdo(store: SessionStore, *, limit: int = 50) -> dict:
+    """Курсы, ближайшие дедлайны и оценки из СДО (Moodle)."""
+    async with session(store) as cookies:
+        api = MireaSDO(session_cookies=cookies)
+        try:
+            courses = await api.get_courses()
+            deadlines = await api.get_deadlines(limit=limit)
+            grades = await api.get_grades()
+        finally:
+            await api.close()
+    if not courses.success and not deadlines.success:
+        raise MireaAppError(courses.message or deadlines.message)
+    return {
+        "courses": [asdict(c) for c in (courses.courses or [])],
+        "deadlines": [
+            {"name": d.name, "course": d.course, "when": _iso(d.timestamp), "activity": d.activity or None, "url": d.url or None}
+            for d in (deadlines.deadlines or [])
+        ],
+        "grades": [asdict(g) for g in (grades.grades or [])],
+    }
+
+
 async def acs_today(store: SessionStore) -> dict:
     async with session(store) as cookies:
         api = MireaACS(session_cookies=cookies)
@@ -296,6 +319,7 @@ __all__ = [
     "grades",
     "mark_attendance",
     "my_schedule",
+    "sdo",
     "search",
     "session",
     "status",

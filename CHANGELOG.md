@@ -12,6 +12,7 @@
 - `SCHEDULE_API_BASE` удалён; новые константы: `SCHEDULE_SUPABASE_URL`, `SCHEDULE_SUPABASE_KEY`, `SCHEDULE_ORGANIZATION_ID`, `SCHEDULE_OF_BASE`
 
 ### Добавлено
+- `MireaSDO` (`pymirea.sdo`) — клиент СДО МИРЭА (online-edu.mirea.ru, Moodle): курсы, ближайшие дедлайны, оценки. Сессия `MoodleSession` берётся молча через тот же Keycloak SSO (OIDC-плагин Moodle), повторный логин не нужен; данные читаются через штатный Moodle AJAX (`/lib/ajax/service.php`), без токена веб-сервисов. Команда CLI `pymirea sdo`
 - `MireaSchedule.get_free_rooms(start, end)` — свободные аудитории в интервале (`get_free_rooms_window`)
 
 ### Добавлено
