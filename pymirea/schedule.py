@@ -1,12 +1,17 @@
 """Schedule client for МИРЭА.
 
-Covers two upstream sources:
+Sources:
 
-1. **mirea.ninja API** (``https://app-api.mirea.ninja``) — JSON endpoints
-   for groups, teachers, classrooms. Search by name, fetch by UID.
+1. **Supabase mirea.ninja** (``https://supabase.mirea.ninja``) — public
+   PostgREST RPCs with a publishable key: ``search_schedule_targets``,
+   ``get_schedule_for_entity``, ``get_free_rooms_window``. Primary source.
+   (The old ``app-api.mirea.ninja`` REST API is deprecated — do not use it.)
 
-2. **english.mirea.ru ICS endpoint** (``https://english.mirea.ru/
-   schedule/api/ical/{institute_id}/{group_id}``) — raw RFC 5545 calendar.
+2. **schedule-of.mirea.ru** — official МИРЭА iCal feeds
+   (``/schedule/api/ical/{1|2|3}/{id}`` for group/teacher/classroom).
+   Fallback when Supabase is unavailable.
+
+3. **english.mirea.ru ICS endpoint** — :meth:`MireaSchedule.fetch_ical_for_group`.
 
 Both surfaces feed the same :class:`Schedule` dataclass. Three different
 JSON shapes from mirea.ninja (``data``-array of lessons, ``lessons``-by-
@@ -22,10 +27,10 @@ The library does not cache; consumers should add their own caching layer
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
-from urllib.parse import quote
 
 import httpx
 
@@ -39,7 +44,11 @@ logger = logging.getLogger(__name__)
 
 # ─── Constants ───────────────────────────────────────────────────────
 
-SCHEDULE_API_BASE = "https://app-api.mirea.ninja"
+SCHEDULE_SUPABASE_URL = "https://ejzybbyjwtzbibrrwrli.supabase.co"  # = supabase.mirea.ninja
+SCHEDULE_SUPABASE_KEY = "sb_publishable_l4qxhUYyypOh4Zqqnn7dBw_zPS_CO2y"  # publishable, публичный
+SCHEDULE_ORGANIZATION_ID = "mirea"
+SCHEDULE_OF_BASE = "https://schedule-of.mirea.ru"
+_ICAL_TARGET_TYPES = {"group": 1, "teacher": 2, "classroom": 3}
 ENGLISH_MIREA_ICAL_BASE = "https://english.mirea.ru/schedule/api/ical"
 
 _MSK_TZ = timezone(timedelta(hours=3))
@@ -423,11 +432,15 @@ def _extract_events(payload: Any) -> list[ScheduleEvent]:
     return events
 
 
-def _derive_entity_name(kind: str, payload: dict) -> Optional[str]:
-    """Pull a human-readable entity name out of a mirea.ninja payload."""
-    if not isinstance(payload, dict):
+def _derive_entity_name(kind: str, payload: Any) -> Optional[str]:
+    """Pull a human-readable entity name out of a schedule payload
+    (``{"data": [...]}`` or a bare list of lesson items)."""
+    if isinstance(payload, list):
+        data = payload
+    elif isinstance(payload, dict):
+        data = payload.get("data")
+    else:
         return None
-    data = payload.get("data")
     if not isinstance(data, list) or not data:
         return None
     for item in data:
@@ -551,71 +564,117 @@ class MireaSchedule:
             await breaker.record_failure()
             return None, "Ошибка сервиса расписания"
 
+    async def _rpc(self, name: str, body: dict) -> tuple[Any, Optional[str]]:
+        """POST to a Supabase PostgREST RPC with circuit-breaker protection."""
+        breaker = get_breaker("schedule_api")
+        decision = await breaker.allow()
+        if not decision.allowed:
+            retry_after = decision.retry_after_s or 5
+            return None, f"Расписание временно недоступно. Попробуйте через {retry_after} сек."
+        try:
+            response = await self._get_client().post(
+                f"{SCHEDULE_SUPABASE_URL}/rest/v1/rpc/{name}",
+                json=body,
+                headers={
+                    "apikey": SCHEDULE_SUPABASE_KEY,
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+            )
+        except httpx.TimeoutException:
+            await breaker.record_failure()
+            return None, "Сервис расписания не отвечает"
+        except Exception:
+            await breaker.record_failure()
+            return None, "Ошибка сервиса расписания"
+        if 500 <= int(response.status_code) <= 599:
+            await breaker.record_failure()
+        else:
+            await breaker.record_success()
+        if response.status_code != 200:
+            return None, f"Сервис расписания вернул HTTP {response.status_code}"
+        try:
+            return response.json(), None
+        except Exception:
+            return None, "Сервис расписания вернул не JSON"
+
     # ── Search ─────────────────────────────────────────────────────
+
+    async def _search_targets(self, kind: str, query: str, limit: int = 20) -> list[dict]:
+        data, _ = await self._rpc(
+            "search_schedule_targets",
+            {
+                "p_target_type": kind,
+                "p_query": query or "",
+                "p_organization_id": SCHEDULE_ORGANIZATION_ID,
+                "p_limit": limit,
+            },
+        )
+        return [x for x in data if isinstance(x, dict)] if isinstance(data, list) else []
+
+    @staticmethod
+    def _target_name(item: dict) -> Optional[str]:
+        name = item.get("full_title") or item.get("target_title") or item.get("name")
+        return str(name) if name else None
 
     async def search_groups(self, query: str) -> list[GroupInfo]:
         """Search for groups by name. Empty list on any failure (search is
         best-effort — UI usually falls back to free-text query)."""
         results: list[GroupInfo] = []
-        response, _ = await self._get_with_breaker(
-            f"{SCHEDULE_API_BASE}/api/v1/schedule/search/groups",
-            params={"query": query},
-            headers={"Accept": "application/json"},
-        )
-        if response is None or response.status_code != 200:
-            return results
-        try:
-            data = response.json()
-        except Exception:
-            return results
-        items = data.get("results", []) if isinstance(data, dict) else []
-        for item in items:
-            info = _extract_group_info(item)
-            if info:
-                results.append(info)
+        for item in await self._search_targets("group", query):
+            name = self._target_name(item)
+            if name:
+                uid = item.get("external_id")
+                results.append(GroupInfo(name=name, uid=str(uid) if uid is not None else None))
         return results
 
     async def search_teachers(self, query: str) -> list[GroupInfo]:
-        """Search for teachers by name."""
+        """Search for teachers by name (``name`` is the full name)."""
         results: list[GroupInfo] = []
-        response, _ = await self._get_with_breaker(
-            f"{SCHEDULE_API_BASE}/api/v1/schedule/search/teachers",
-            params={"query": query},
-            headers={"Accept": "application/json"},
-        )
-        if response is None or response.status_code != 200:
-            return results
-        try:
-            data = response.json()
-        except Exception:
-            return results
-        items = data.get("results", []) if isinstance(data, dict) else []
-        for item in items:
-            info = _extract_group_info(item)
-            if info:
-                results.append(info)
+        for item in await self._search_targets("teacher", query):
+            name = self._target_name(item)
+            if name:
+                uid = item.get("external_id")
+                results.append(GroupInfo(name=name, uid=str(uid) if uid is not None else None))
         return results
 
     async def search_classrooms(self, query: str) -> list[ClassroomInfo]:
-        """Search for classrooms by name (returns extra ``campus`` field)."""
+        """Search for classrooms by name (``campus.short_name`` parsed from «А-9 (В-78)»)."""
         results: list[ClassroomInfo] = []
-        response, _ = await self._get_with_breaker(
-            f"{SCHEDULE_API_BASE}/api/v1/schedule/search/classrooms",
-            params={"query": query},
-            headers={"Accept": "application/json"},
-        )
-        if response is None or response.status_code != 200:
-            return results
-        try:
-            data = response.json()
-        except Exception:
-            return results
-        items = data.get("results", []) if isinstance(data, dict) else []
-        for item in items:
-            info = _extract_classroom_info(item)
-            if info:
-                results.append(info)
+        for item in await self._search_targets("classroom", query):
+            name = self._target_name(item)
+            if not name:
+                continue
+            uid = item.get("external_id")
+            info = ClassroomInfo(name=name, uid=str(uid) if uid is not None else None)
+            m = re.search(r"\(([^()]+)\)\s*$", name)
+            if m:
+                info.campus = {"name": None, "short_name": m.group(1).strip()}
+            results.append(info)
         return results
+
+    # ── Free rooms ─────────────────────────────────────────────────
+
+    async def get_free_rooms(self, start: datetime, end: datetime) -> Optional[list[dict]]:
+        """Аудитории, свободные во всём интервале ``[start, end)``.
+
+        Returns ``[{"room": "А-9", "campus": "В-78"}, ...]`` or ``None`` if
+        the service is unavailable."""
+        data, _ = await self._rpc(
+            "get_free_rooms_window",
+            {
+                "p_organization_id": SCHEDULE_ORGANIZATION_ID,
+                "p_from": start.isoformat(),
+                "p_to": end.isoformat(),
+            },
+        )
+        if not isinstance(data, list):
+            return None
+        return [
+            {"room": str(x.get("room")), "campus": x.get("campus")}
+            for x in data
+            if isinstance(x, dict) and x.get("room")
+        ]
 
     # ── Fetch by entity ────────────────────────────────────────────
 
@@ -651,28 +710,40 @@ class MireaSchedule:
         uid: str,
         name: Optional[str] = None,
     ) -> Schedule:
-        encoded_uid = quote(uid or name or "")
-        response, _ = await self._get_with_breaker(
-            f"{SCHEDULE_API_BASE}/api/v1/schedule/{kind}/{encoded_uid}",
-            headers={"Accept": "application/json"},
+        entity = uid or name or ""
+        payload, _ = await self._rpc(
+            "get_schedule_for_entity",
+            {
+                "p_entity_type": kind,
+                "p_entity": entity,
+                "p_organization_id": SCHEDULE_ORGANIZATION_ID,
+            },
         )
-        if response is None or response.status_code != 200:
-            return Schedule(events=[], entity_type=kind, entity_name=name, entity_uid=uid)
-        try:
-            payload = response.json()
-        except Exception as e:
-            raise MireaParseFailed(
-                "schedule endpoint returned non-JSON",
-                response_preview=(response.text or "")[:500],
-            ) from e
-        events = _extract_events(payload)
-        resolved_name = name or _derive_entity_name(kind, payload)
+        events = _extract_events(payload) if payload is not None else []
+        if events:
+            return Schedule(
+                events=events,
+                entity_type=kind,
+                entity_name=name or _derive_entity_name(kind, payload),
+                entity_uid=uid,
+            )
+
+        # Fallback: официальный iCal schedule-of.mirea.ru (нужен числовой id).
+        type_no = _ICAL_TARGET_TYPES.get(kind)
+        if type_no and uid and str(uid).isdigit():
+            try:
+                ical = await self.fetch_ical(f"{SCHEDULE_OF_BASE}/schedule/api/ical/{type_no}/{uid}")
+            except MireaParseFailed:
+                ical = None
+            if ical and ical.events:
+                return Schedule(events=ical.events, entity_type=kind, entity_name=name, entity_uid=uid)
+
         return Schedule(
-            events=events,
+            events=[],
             entity_type=kind,
-            entity_name=resolved_name,
+            entity_name=name,
             entity_uid=uid,
-            raw_payload=payload if not events else None,
+            raw_payload=payload,
         )
 
     # ── ICS endpoints ──────────────────────────────────────────────

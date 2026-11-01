@@ -15,8 +15,10 @@ import respx
 from pymirea import _settings
 from pymirea import app as A
 from pymirea.cli import main
-from pymirea.schedule import SCHEDULE_API_BASE
+from pymirea.schedule import SCHEDULE_SUPABASE_URL
 from pymirea.store import NotLoggedIn, SessionStore
+
+RPC = f"{SCHEDULE_SUPABASE_URL}/rest/v1/rpc"
 
 
 @pytest.fixture(autouse=True)
@@ -30,24 +32,23 @@ def _isolated(tmp_path, monkeypatch):
 
 
 def _mock_group_api(router):
-    router.get(f"{SCHEDULE_API_BASE}/api/v1/schedule/search/groups").mock(
-        return_value=httpx.Response(200, json={"results": [{"name": "ЭФБО-01-24", "id": 5012}]})
+    router.post(f"{RPC}/search_schedule_targets").mock(
+        return_value=httpx.Response(200, json=[{"external_id": "5012", "target_title": "ЭФБО-01-24", "full_title": "ЭФБО-01-24"}])
     )
-    router.get(f"{SCHEDULE_API_BASE}/api/v1/schedule/group/5012").mock(
+    router.post(f"{RPC}/get_schedule_for_entity").mock(
         return_value=httpx.Response(
             200,
-            json={
-                "data": [
-                    {
-                        "subject": "Физика",
-                        "lesson_type": "lecture",
-                        "dates": ["2030-01-10"],
-                        "lesson_bells": {"start_time": "09:00", "end_time": "10:30"},
-                        "classrooms": [{"name": "А-9"}],
-                        "groups": ["ЭФБО-01-24"],
-                    }
-                ]
-            },
+            json=[
+                {
+                    "type": "__lesson_schedule__",
+                    "subject": "Физика",
+                    "lesson_type": "lecture",
+                    "dates": ["10-01-2030"],
+                    "lesson_bells": {"start_time": "09:00", "end_time": "10:30"},
+                    "classrooms": [{"name": "А-9"}],
+                    "groups": ["ЭФБО-01-24"],
+                }
+            ],
         )
     )
 
@@ -135,9 +136,7 @@ def test_cli_timetable_ics(tmp_path, capsys):
 
 @respx.mock
 def test_cli_search_not_found(capsys):
-    respx.get(f"{SCHEDULE_API_BASE}/api/v1/schedule/search/groups").mock(
-        return_value=httpx.Response(200, json={"results": []})
-    )
+    respx.post(f"{RPC}/search_schedule_targets").mock(return_value=httpx.Response(200, json=[]))
     assert main(["timetable", "group", "НЕТ-00-00"]) == 1
     assert "ничего не найдено" in capsys.readouterr().err
 

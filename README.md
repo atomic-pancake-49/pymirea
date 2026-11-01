@@ -298,6 +298,7 @@ Issues и PR приветствуются. Особенно полезно:
 ## Источники
 
 - **[daftrent/pymirea](https://github.com/daftrent/pymirea)** (ранее `silverhans/pymirea`, MIT) — вся библиотека: авторизация через SSO, клиенты Пульса, БРС, СКУД, расписания, шифрование сессий. Этот репозиторий — её форк; авторские права и лицензия оригинала сохранены в [LICENSE](LICENSE).
+- **[mirea.ninja](https://mirea.ninja)** ([0niel/university-app](https://github.com/0niel/university-app)) — публичное расписание через их Supabase (`supabase.mirea.ninja`, publishable-ключ). Запасной источник — официальный iCal `schedule-of.mirea.ru`.
 - **[PowerTronin/mirea-mcp](https://github.com/PowerTronin/mirea-mcp)** (GPL-3.0) — идея и принципы MCP-сервера: вход только вручную, пароль не проходит через MCP, инструменты только на чтение. Код оттуда не копировался (там TypeScript + Playwright для СДО).
 - Поверх этого добавлено: CLI (`pymirea/cli.py`), MCP-сервер (`pymirea/mcp_server.py`), локальное хранилище сессии (`pymirea/store.py`) и общий слой (`pymirea/app.py`).
 

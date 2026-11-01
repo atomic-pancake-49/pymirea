@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+### Изменено
+- `MireaSchedule` больше не ходит в `app-api.mirea.ninja` (API устарел, авторы просили его не использовать). Поиск и расписание идут через публичные RPC Supabase mirea.ninja (`search_schedule_targets`, `get_schedule_for_entity`) с publishable-ключом. Запасной источник — официальный iCal `schedule-of.mirea.ru`. Сигнатуры методов не изменились
+- `search_teachers` возвращает полное ФИО, `search_classrooms` — название с корпусом («А-9 (В-78)») и `campus.short_name`
+- `SCHEDULE_API_BASE` удалён; новые константы: `SCHEDULE_SUPABASE_URL`, `SCHEDULE_SUPABASE_KEY`, `SCHEDULE_ORGANIZATION_ID`, `SCHEDULE_OF_BASE`
+
+### Добавлено
+- `MireaSchedule.get_free_rooms(start, end)` — свободные аудитории в интервале (`get_free_rooms_window`)
+
 ### Добавлено
 - CLI `pymirea`: `login`/`logout`/`status`, `schedule`, `grades`, `attendance`, `acs`, `attend`, `search`, `timetable` (с выгрузкой в `.ics`), у всех команд есть `--json`
 - MCP-сервер (`pymirea mcp` / `pymirea-mcp`, extra `[mcp]`) с read-only инструментами: расписание, БРС, посещаемость, турникеты, публичное расписание. Работает с `mcp` 1.x и 2.x

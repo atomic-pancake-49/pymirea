@@ -14,6 +14,7 @@ The fetcher hits respx-mocked endpoints — no live MIREA needed."""
 from __future__ import annotations
 
 import base64
+import json
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -24,7 +25,8 @@ import respx
 from pymirea import Config, MireaParseFailed, configure
 from pymirea.schedule import (
     ENGLISH_MIREA_ICAL_BASE,
-    SCHEDULE_API_BASE,
+    SCHEDULE_OF_BASE,
+    SCHEDULE_SUPABASE_URL,
     GroupInfo,
     MireaSchedule,
     Schedule,
@@ -318,17 +320,33 @@ def test_extract_classroom_info_no_campus():
 # ─── MireaSchedule HTTP surface ──────────────────────────────────────
 
 
+RPC = f"{SCHEDULE_SUPABASE_URL}/rest/v1/rpc"
+
+LESSON_ITEM = {
+    "uid": "x1",
+    "type": "__lesson_schedule__",
+    "subject": "Алгебра",
+    "lesson_type": "ЛК",
+    "dates": ["01-05-2026", "15-05-2026"],
+    "lesson_bells": {"number": 2, "start_time": "10:40", "end_time": "12:10"},
+    "teachers": [{"uid": "7", "name": "Иванов Иван Иванович"}],
+    "classrooms": [{"uid": "315", "name": "А-303", "campus": {"short_name": "В-78"}}],
+    "groups": ["ИКБО-01-23"],
+    "group_entities": [{"uid": "5012", "name": "ИКБО-01-23"}],
+}
+
+
 @pytest.mark.asyncio
 @respx.mock
 async def test_search_groups_parses_results():
     _setup()
-    respx.get(f"{SCHEDULE_API_BASE}/api/v1/schedule/search/groups").mock(
+    route = respx.post(f"{RPC}/search_schedule_targets").mock(
         return_value=httpx.Response(
             200,
-            json={"results": [
-                {"name": "ИКБО-01-23", "uid": "u1"},
-                {"name": "ИКБО-02-23", "uid": "u2"},
-            ]},
+            json=[
+                {"target_type": "group", "external_id": "5012", "target_title": "ИКБО-01-23", "full_title": "ИКБО-01-23"},
+                {"target_type": "group", "external_id": "5013", "target_title": "ИКБО-02-23", "full_title": "ИКБО-02-23"},
+            ],
         )
     )
     svc = MireaSchedule()
@@ -337,9 +355,33 @@ async def test_search_groups_parses_results():
     finally:
         await svc.close()
 
-    assert len(results) == 2
-    assert results[0].name == "ИКБО-01-23"
-    assert results[0].uid == "u1"
+    assert [(r.name, r.uid) for r in results] == [("ИКБО-01-23", "5012"), ("ИКБО-02-23", "5013")]
+    req = route.calls.last.request
+    assert req.headers["apikey"].startswith("sb_publishable_")
+    body = json.loads(req.content)
+    assert body == {"p_target_type": "group", "p_query": "ИКБО", "p_organization_id": "mirea", "p_limit": 20}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_search_teachers_uses_full_name_and_classroom_campus():
+    _setup()
+
+    def handler(request):
+        kind = json.loads(request.content)["p_target_type"]
+        if kind == "teacher":
+            return httpx.Response(200, json=[{"external_id": "1279", "target_title": "Осипов А. В.", "full_title": "Осипов Алексей Викторович"}])
+        return httpx.Response(200, json=[{"external_id": "315", "target_title": "А-9 (В-78)", "full_title": "А-9 (В-78)"}])
+
+    respx.post(f"{RPC}/search_schedule_targets").mock(side_effect=handler)
+    svc = MireaSchedule()
+    try:
+        teachers = await svc.search_teachers("Осипов")
+        rooms = await svc.search_classrooms("А-9")
+    finally:
+        await svc.close()
+    assert teachers[0].name == "Осипов Алексей Викторович" and teachers[0].uid == "1279"
+    assert rooms[0].name == "А-9 (В-78)" and rooms[0].campus == {"name": None, "short_name": "В-78"}
 
 
 @pytest.mark.asyncio
@@ -347,9 +389,7 @@ async def test_search_groups_parses_results():
 async def test_search_groups_returns_empty_on_500():
     """Server error → empty list, never raises (search is best-effort)."""
     _setup()
-    respx.get(f"{SCHEDULE_API_BASE}/api/v1/schedule/search/groups").mock(
-        return_value=httpx.Response(500)
-    )
+    respx.post(f"{RPC}/search_schedule_targets").mock(return_value=httpx.Response(500))
     svc = MireaSchedule()
     try:
         results = await svc.search_groups("X")
@@ -361,38 +401,43 @@ async def test_search_groups_returns_empty_on_500():
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_get_group_schedule_normalizes_payload():
+async def test_get_group_schedule_expands_dates():
     _setup()
-    respx.get(f"{SCHEDULE_API_BASE}/api/v1/schedule/group/u1").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "data": [
-                    {
-                        "subject": "Алгебра",
-                        "lesson_type": "ЛК",
-                        "dates": ["2026-05-01"],
-                        "lesson_bells": {"start_time": "10:00", "end_time": "11:30"},
-                        "teachers": [{"name": "Иванов"}],
-                        "classrooms": [{"name": "А-303"}],
-                        "groups": ["ИКБО-01-23"],
-                    }
-                ]
-            },
-        )
-    )
+    route = respx.post(f"{RPC}/get_schedule_for_entity").mock(return_value=httpx.Response(200, json=[LESSON_ITEM]))
     svc = MireaSchedule()
     try:
-        schedule = await svc.get_group_schedule(uid="u1")
+        schedule = await svc.get_group_schedule(uid="5012")
     finally:
         await svc.close()
 
-    assert len(schedule.events) == 1
+    assert [e.start.isoformat() for e in schedule.events] == ["2026-05-01T10:40:00+03:00", "2026-05-15T10:40:00+03:00"]
     assert schedule.events[0].summary == "Алгебра (ЛК)"
-    assert schedule.entity_type == "group"
-    assert schedule.entity_uid == "u1"
+    assert schedule.events[0].location == "А-303 (В-78)"
+    assert "Иванов" in schedule.events[0].description
     assert schedule.entity_name == "ИКБО-01-23"  # auto-derived
-    assert schedule.raw_payload is None  # events present, no raw kept
+    assert schedule.raw_payload is None
+    body = json.loads(route.calls.last.request.content)
+    assert body == {"p_entity_type": "group", "p_entity": "5012", "p_organization_id": "mirea"}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_schedule_falls_back_to_official_ical():
+    """Supabase недоступен → официальный iCal schedule-of.mirea.ru."""
+    _setup()
+    respx.post(f"{RPC}/get_schedule_for_entity").mock(return_value=httpx.Response(503))
+    ical = (
+        "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART:20260501T074000Z\r\nDTEND:20260501T091000Z\r\n"
+        "SUMMARY:ЛК Алгебра\r\nLOCATION:А-303\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    )
+    respx.get(f"{SCHEDULE_OF_BASE}/schedule/api/ical/2/1279").mock(return_value=httpx.Response(200, text=ical))
+    svc = MireaSchedule()
+    try:
+        schedule = await svc.get_teacher_schedule(uid="1279", name="Осипов Алексей Викторович")
+    finally:
+        await svc.close()
+    assert len(schedule.events) == 1 and schedule.events[0].summary == "ЛК Алгебра"
+    assert schedule.entity_name == "Осипов Алексей Викторович"
 
 
 @pytest.mark.asyncio
@@ -400,17 +445,46 @@ async def test_get_group_schedule_normalizes_payload():
 async def test_get_group_schedule_keeps_raw_when_no_events():
     """If normalization yields no events, keep raw_payload for debugging."""
     _setup()
-    respx.get(f"{SCHEDULE_API_BASE}/api/v1/schedule/group/u9").mock(
-        return_value=httpx.Response(200, json={"data": []})
-    )
+    respx.post(f"{RPC}/get_schedule_for_entity").mock(return_value=httpx.Response(200, json=[]))
     svc = MireaSchedule()
     try:
-        schedule = await svc.get_group_schedule(uid="u9")
+        schedule = await svc.get_group_schedule(uid="u9")  # не число → без iCal fallback
     finally:
         await svc.close()
 
     assert schedule.events == []
-    assert schedule.raw_payload == {"data": []}
+    assert schedule.raw_payload == []
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_free_rooms():
+    _setup()
+    route = respx.post(f"{RPC}/get_free_rooms_window").mock(
+        return_value=httpx.Response(200, json=[{"room": "А-9", "campus": "В-78"}, {"room": "10", "campus": "ФФ"}])
+    )
+    svc = MireaSchedule()
+    try:
+        t0 = datetime(2026, 11, 2, 10, 40, tzinfo=timezone(timedelta(hours=3)))
+        rooms = await svc.get_free_rooms(t0, t0 + timedelta(minutes=90))
+    finally:
+        await svc.close()
+    assert rooms == [{"room": "А-9", "campus": "В-78"}, {"room": "10", "campus": "ФФ"}]
+    assert json.loads(route.calls.last.request.content)["p_from"] == "2026-11-02T10:40:00+03:00"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_old_ninja_api_is_never_called():
+    _setup()
+    respx.post(url__regex=r"https://ejzybbyjwtzbibrrwrli\.supabase\.co/.*").mock(return_value=httpx.Response(200, json=[]))
+    svc = MireaSchedule()
+    try:
+        await svc.search_groups("x")
+        await svc.get_group_schedule(uid="abc")
+    finally:
+        await svc.close()
+    assert all("app-api.mirea.ninja" not in str(c.request.url) for c in respx.calls)
 
 
 @pytest.mark.asyncio
