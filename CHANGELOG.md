@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+### Добавлено
+- CLI `pymirea`: `login`/`logout`/`status`, `schedule`, `grades`, `attendance`, `acs`, `attend`, `search`, `timetable` (с выгрузкой в `.ics`), у всех команд есть `--json`
+- MCP-сервер (`pymirea mcp` / `pymirea-mcp`, extra `[mcp]`) с read-only инструментами: расписание, БРС, посещаемость, турникеты, публичное расписание. Работает с `mcp` 1.x и 2.x
+- `pymirea.store.SessionStore` — локальное зашифрованное хранилище сессии (`~/.config/pymirea`, права `0600`)
+- `pymirea.app` — общий слой для CLI и MCP, возвращает JSON-сериализуемые структуры
+- Тесты `tests/test_cli_mcp.py`
+
 ## [0.2.0] — 2026-04-14
 
 ### Исправлено

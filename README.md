@@ -162,6 +162,65 @@ async def get_schedule(session: dict = Depends(current_session)):
 
 > Примеров для QR-сканирования в папке `examples/` пока нет — PR приветствуется.
 
+## CLI и MCP-сервер
+
+pymirea можно использовать без кода — из терминала или из LLM-клиента (Claude Desktop/Code, Cursor и т.п.) через [MCP](https://modelcontextprotocol.io).
+
+```bash
+pip install "pymirea[mcp]"   # без [mcp] ставится только CLI
+```
+
+### CLI
+
+```bash
+pymirea login                                  # логин, пароль (не отображается) и код из письма
+pymirea status --check                         # жива ли сессия
+pymirea schedule --days 3                      # своё расписание из Пульса
+pymirea grades                                 # баллы БРС
+pymirea attendance "Физика"                    # посещаемость по дисциплине (id или часть названия)
+pymirea acs                                    # проходы через турникеты за сегодня
+pymirea attend "https://pulse.mirea.ru/..."    # отметиться на паре по ссылке из QR
+pymirea search group ЭФБО-01-24                # поиск группы / teacher / classroom
+pymirea timetable group ЭФБО-01-24 -d 7        # публичное расписание, вход не нужен
+pymirea timetable teacher "Иванов" --ics t.ics # выгрузка в календарь
+pymirea logout
+```
+
+У каждой команды есть `--json`. Сессия хранится зашифрованной (`SessionCrypto`) в `~/.config/pymirea/` (меняется через `PYMIREA_HOME` или `--home`), файлы с правами `0600`. Пароль не сохраняется. Ключ шифрования создаётся при первом запуске; вместо файла его можно передать через `PYMIREA_SESSION_KEYS`. Прокси для pulse.mirea.ru — через `MIREA_PROXY`.
+
+### MCP-сервер
+
+```bash
+pymirea login        # один раз, в терминале
+pymirea mcp          # stdio; есть также --transport streamable-http
+```
+
+Конфиг для MCP-клиента:
+
+```json
+{
+  "mcpServers": {
+    "mirea": { "command": "pymirea-mcp" }
+  }
+}
+```
+
+Для Claude Code: `claude mcp add mirea -- pymirea-mcp`.
+
+Инструменты (все только читают данные):
+
+| Инструмент | Что делает |
+|---|---|
+| `session_status` | залогинен ли пользователь, когда истекает токен |
+| `my_schedule` | своё расписание из Пульса на N дней |
+| `my_grades` | баллы БРС по всем предметам |
+| `my_attendance` | посещаемость по дисциплине |
+| `my_turnstile_events` | турникеты за сегодня |
+| `search_timetable` | поиск группы / преподавателя / аудитории |
+| `group_timetable` | публичное расписание группы / преподавателя / аудитории |
+
+Пароль и OTP через MCP не передаются: если сессии нет или она протухла, модель попросит выполнить `pymirea login`. Отметка посещаемости по QR есть только в CLI. Такой подход взят из [PowerTronin/mirea-mcp](https://github.com/PowerTronin/mirea-mcp) — MCP-сервера для СДО МИРЭА (online-edu.mirea.ru). Он хорошо дополняет этот: там курсы, задания и дедлайны, здесь Пульс и расписание.
+
 ## Шифрование сессий
 
 Хранить cookies МИРЭА в БД в открытом виде нельзя — `SessionCrypto` оборачивает их в Fernet-токен с ключом, выведенным через HKDF из вашего `session_keys`:
@@ -218,7 +277,7 @@ Config(
 
 ## Что pymirea НЕ делает
 
-- ❌ Не хранит сессии — это задача вашего приложения (БД/Redis/файл)
+- ❌ Не хранит сессии — это задача вашего приложения (БД/Redis/файл). Исключение — CLI/MCP: они держат одну локальную сессию в `~/.config/pymirea/`
 - ❌ Не управляет пользователями — у вас своя auth-система
 - ❌ Не предоставляет HTTP-handlers — пишите свои под свой фреймворк
 - ❌ Не парсит сложные нестандартные формы МИРЭА (профили, дипломы — TBD)

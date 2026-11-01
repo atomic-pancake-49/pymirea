@@ -30,8 +30,13 @@ Homepage = "https://github.com/silverhans/pymirea"
 Issues = "https://github.com/silverhans/pymirea/issues"
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "pytest-asyncio>=0.23", "ruff>=0.5", "respx>=0.20"]
+dev = ["pytest>=7", "pytest-asyncio>=0.23", "ruff>=0.5", "respx>=0.20", "mcp>=1.2"]
 tls = ["curl_cffi>=0.7"]
+mcp = ["mcp>=1.2"]
+
+[project.scripts]
+pymirea = "pymirea.cli:main"
+pymirea-mcp = "pymirea.mcp_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["pymirea"]
