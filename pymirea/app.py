@@ -177,7 +177,7 @@ async def sdo(store: SessionStore, *, limit: int = 50) -> dict:
         try:
             courses = await api.get_courses()
             deadlines = await api.get_deadlines(limit=limit)
-            grades = await api.get_grades()
+            grades = await api.get_grades(course_names={c.id: c.name for c in (courses.courses or [])})
         finally:
             await api.close()
     if not courses.success and not deadlines.success:

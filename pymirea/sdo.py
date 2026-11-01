@@ -227,9 +227,14 @@ class MireaSDO:
         ok, err = await self._ensure_session()
         if not ok:
             return SdoResult(success=False, message=err or "Нет сессии СДО")
+        # Сигнатура Moodle: timesortfrom + limitnum (НЕ limit), как в блоке Timeline.
         data = await self._ajax(
             "core_calendar_get_action_events_by_timesort",
-            {"limit": max(1, min(int(limit), 200)), "timesortfrom": int(time.time())},
+            {
+                "timesortfrom": int(time.time()),
+                "limitnum": max(1, min(int(limit), 200)),
+                "limittononsuspendedevents": True,
+            },
         )
         events = data.get("events") if isinstance(data, dict) else None
         deadlines: list[SdoDeadline] = []
@@ -252,15 +257,17 @@ class MireaSDO:
             return SdoResult(success=False, message="Не удалось получить дедлайны (проверьте сессию СДО)")
         return SdoResult(success=True, message="OK", deadlines=deadlines)
 
-    async def get_grades(self) -> SdoResult:
+    async def get_grades(self, *, course_names: dict[int, str] | None = None) -> SdoResult:
+        """Оценки по курсам. ``course_names`` (id→имя) можно передать заранее,
+        чтобы не запрашивать список курсов повторно (overview отдаёт только courseid)."""
         ok, err = await self._ensure_session()
         if not ok:
             return SdoResult(success=False, message=err or "Нет сессии СДО")
         data = await self._ajax("gradereport_overview_get_course_grades", {})
         rows = data.get("grades") if isinstance(data, dict) else None
-        # fallback: имена курсов подтянем из списка курсов (overview отдаёт courseid).
-        names: dict[int, str] = {}
-        if rows:
+        # Имена курсов: берём переданные, иначе (fallback) один раз тянем список курсов.
+        names: dict[int, str] = dict(course_names or {})
+        if rows and not names:
             courses = await self.get_courses()
             names = {c.id: c.name for c in (courses.courses or [])}
         grades: list[SdoGrade] = []
