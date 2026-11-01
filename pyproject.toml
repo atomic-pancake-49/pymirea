@@ -9,7 +9,7 @@ description = "Async Python client for Мирэа LKS (schedule, grades, attenda
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
-authors = [{ name = "silverhans" }]
+authors = [{ name = "silverhans" }, { name = "atomic-pancake-49" }]
 keywords = ["mirea", "lks", "university", "async", "scraper"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -26,8 +26,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/silverhans/pymirea"
-Issues = "https://github.com/silverhans/pymirea/issues"
+Homepage = "https://github.com/atomic-pancake-49/pymirea"
+Issues = "https://github.com/atomic-pancake-49/pymirea/issues"
+Upstream = "https://github.com/daftrent/pymirea"
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "pytest-asyncio>=0.23", "ruff>=0.5", "respx>=0.20", "mcp>=1.2"]

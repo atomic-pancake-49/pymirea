@@ -1,7 +1,9 @@
 # pymirea
 
+> Форк [daftrent/pymirea](https://github.com/daftrent/pymirea) с CLI и MCP-сервером. Откуда что взято — в разделе [«Источники»](#источники).
+
 [![PyPI](https://img.shields.io/pypi/v/pymirea.svg)](https://pypi.org/project/pymirea/)
-[![CI](https://github.com/silverhans/pymirea/actions/workflows/ci.yml/badge.svg)](https://github.com/silverhans/pymirea/actions/workflows/ci.yml)
+[![CI](https://github.com/atomic-pancake-49/pymirea/actions/workflows/ci.yml/badge.svg)](https://github.com/atomic-pancake-49/pymirea/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
@@ -221,6 +223,8 @@ pymirea mcp          # stdio; есть также --transport streamable-http
 
 Пароль и OTP через MCP не передаются: если сессии нет или она протухла, модель попросит выполнить `pymirea login`. Отметка посещаемости по QR есть только в CLI. Такой подход взят из [PowerTronin/mirea-mcp](https://github.com/PowerTronin/mirea-mcp) — MCP-сервера для СДО МИРЭА (online-edu.mirea.ru). Он хорошо дополняет этот: там курсы, задания и дедлайны, здесь Пульс и расписание.
 
+Сервер рассчитан на локальный запуск через stdio: сессия лежит только на твоей машине. Выставлять его в интернет (`--transport streamable-http` на публичном адресе) не стоит — любой с адресом получит доступ к оценкам владельца сессии.
+
 ## Шифрование сессий
 
 Хранить cookies МИРЭА в БД в открытом виде нельзя — `SessionCrypto` оборачивает их в Fernet-токен с ключом, выведенным через HKDF из вашего `session_keys`:
@@ -290,6 +294,12 @@ Issues и PR приветствуются. Особенно полезно:
 - Тесты для новых сценариев (logout, edge-cases в 2FA, etc.)
 - Поддержка дополнительных эндпоинтов МИРЭА
 - Примеры для других фреймворков (Discord-боты, CLI-tools, ...)
+
+## Источники
+
+- **[daftrent/pymirea](https://github.com/daftrent/pymirea)** (ранее `silverhans/pymirea`, MIT) — вся библиотека: авторизация через SSO, клиенты Пульса, БРС, СКУД, расписания, шифрование сессий. Этот репозиторий — её форк; авторские права и лицензия оригинала сохранены в [LICENSE](LICENSE).
+- **[PowerTronin/mirea-mcp](https://github.com/PowerTronin/mirea-mcp)** (GPL-3.0) — идея и принципы MCP-сервера: вход только вручную, пароль не проходит через MCP, инструменты только на чтение. Код оттуда не копировался (там TypeScript + Playwright для СДО).
+- Поверх этого добавлено: CLI (`pymirea/cli.py`), MCP-сервер (`pymirea/mcp_server.py`), локальное хранилище сессии (`pymirea/store.py`) и общий слой (`pymirea/app.py`).
 
 ## Лицензия
 
