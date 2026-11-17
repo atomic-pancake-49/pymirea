@@ -254,6 +254,8 @@ decrypted: dict = crypto.decrypt_session(encrypted)     # прочтите из 
 | `get_authorization_header(cookies)` | Bearer-токен из dict сессии |
 | `try_refresh_tokens(cookies)` | Best-effort обновление access-токена |
 | `get_token_age_seconds(cookies)` | Сколько секунд токен живёт |
+| `pulse_session_needs_login(cookies)` | `True`, если SSO отверг сессию и пользователю нужно войти заново |
+| `has_pulse_auth_cookie(cookies)` | Есть ли в сессии cookie Пульса (`Pulse.Auth.Cookie` или прежняя `.AspNetCore.Cookies`) |
 
 Подробнее в исходниках: [`pymirea/`](pymirea/).
 
@@ -271,6 +273,36 @@ Config(
     breaker_recovery_s=30.0,
 )
 ```
+
+## Ошибки как исключения
+
+Методы возвращают результат с `success` и `message` и не бросают исключений, как и раньше.
+Если удобнее исключения, вызовите `raise_for_error()`:
+
+```python
+from pymirea import MireaRateLimited, MireaSessionExpired
+
+result = await api.mark_attendance(qr)
+try:
+    result.raise_for_error(cookies)  # cookies — тот же dict, что передавали в MireaAPI
+except MireaSessionExpired:
+    ...  # попросить пользователя войти заново
+except MireaRateLimited as e:
+    ...  # повторить через e.retry_after секунд
+```
+
+## Изменения Пульса в октябре 2026
+
+С 0.5.0 библиотека следует за переразвёртыванием Пульса 6 октября 2026:
+
+- Сессия хранится в cookie `Pulse.Auth.Cookie`. Старые сессии с `.AspNetCore.Cookies`
+  продолжают работать, пока жива их Keycloak-сессия, и обновляются автоматически.
+- Если Keycloak-сессия умерла, вызовы возвращают «Сессия МИРЭА истекла. Перелогиньтесь.»,
+  а `pulse_session_needs_login(cookies)` становится `True`. Сохраняйте обновлённый dict
+  cookies после каждого вызова: в нём новая cookie и отметка о неудаче.
+- БРС приходит за текущий семестр. У `Subject` есть максимумы по типам баллов
+  (`*_max`): с 2026/27 они различаются по предметам.
+- Вход идёт через Пульс (PAR) с «запомнить меня», сессия живёт месяцы, а не 16 часов.
 
 ## Совместимость
 

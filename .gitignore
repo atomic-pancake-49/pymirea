@@ -9,3 +9,4 @@ build/
 .ruff_cache/
 .mypy_cache/
 CLAUDE.local.md
+tests/artifacts/
